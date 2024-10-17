@@ -309,25 +309,7 @@ class TemplateEngine{
 							$result .= $this->renderPart($blockStack[count($blockStack)-1], $context);
 	
 						}
-						// if($content && !isset($content["type"])){
-	
-						// 	dump(array_keys($content));
-						// 	die("asldkañlsd");
-						// }
-						// if($content && $content["type"] == "dynamic"){
-							
-						// 	$result .= $this->renderPart($content, $context);
-						// }
-						// //block
-						// else if( $closeBlock || isset($customBlock["new"])){
-	
-						// 	if(!$blockStack[count($blockStack)-1]){
-						// 		dump($blockStack);
-						// 		die("Broken block, check string for unclosed blocks");
-						// 	}
-				
-						// 	$result .= $this->renderPart($blockStack[count($blockStack)-1], $context);
-						// }
+						
 					}
 					//content and is main content
 					if(!$isDynamic ){
@@ -385,15 +367,10 @@ class TemplateEngine{
 					die("Recursion");
 				}
 
-				// if($blockStack[count($blockStack)-1] == $content){
-
-				// 	dump($blockStack);
-				// 	dump($content);
-				// 	die("recursion");
-				// }
+			
 
 				 $currentBlock["content"][] = &$content;
-				// $blockStack[count($blockStack)-1]["content"][] = &$content;
+
 			}
 			
 			
@@ -413,13 +390,6 @@ class TemplateEngine{
 		}
 
 
-
-		// if(strpos($str, "data-popup=")){
-
-		// 	dump($str);
-		// 	dump($template);
-		// 	die();
-		// }
 
 		$r = $this->saveTemplate($originalStr, $template);
 
