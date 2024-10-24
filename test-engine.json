@@ -1,0 +1,87 @@
+[
+    {
+        "template": "<component is='{{props.tag}}'  href='{{props.link}}'><slot name='before'><Icon if='{{props.icon.before}}'  name='icon' /></slot><span>{{#props.text}}{{#slots}}{{/slots}}{{/props.text}}<slot >{{props.text}}</slot></span><slot name='after'><Icon if='{{props.icon.after}}'  name='icon' /></slot></component>",
+        "context": [],
+        "expected": "<component is='{{props.tag}}'  href='{{props.link}}'><slot name='before'><Icon if='{{props.icon.before}}'  name='icon' /></slot><span>"
+    },
+    {
+        "name": "deep nested",
+        "template": "aaaabbb\n{{asda.aasda {{asda.aads{{asda}}@asda}} }}macacas\n{{asda}}macacas\n{{#if some}}\n    asda\n    {{#if}}\n        {{asdasd.asda}}\n        asdasdañlk\n        {{asda.aasda {{asda.aads@asda}} }}\n        asdasda\n        {{#if asda}}\n            asda\n        {{/if}}\n        asdañklsda\n    {{/if}}\n    NOOOOOOT\n{{else}}\n    NOTTT SOME data\n{{/if}}\n{{#asda}}\n    WHOWWW me\n{{else}}\n    default NOOOOT\n{{/asda}}\n",
+        "context": []
+    },
+    {
+        "template": "{{#if some}}\n    {{some}}\n    other data\n{{else}}\n    default data\n{{/if}}",
+        "context": {
+            "some": "some data"
+        },
+        "expected": "    some data\n    other data"
+    },
+    {
+        "template": "link",
+        "context": [],
+        "expected": "link"
+    },
+    {
+        "template": "<{{props.tag}}  is='{{props.tag}}'  data-popup='{{parentNode.id}}' data-show-popup='{{props.showPopup}}'><div if='{{slots.bg}}' class='container_bg'>{{#slot bg}}{{/slot}}</div><div class='popup_close' data-toggle-popup>{{#slot close}} X {{/slot}}</div>{{#slot default}}  {{/slot}}</{{props.tag}}>",
+        "context": [],
+        "expected": ""
+    },
+    {
+        "template": "{{{asda}}}",
+        "context": [],
+        "expected": ""
+    },
+    {
+        "template": "{{{asda}}}",
+        "context": {
+             "asda":" <div>asda</div>"
+        },
+        "expected": ""
+    },
+    {
+        "template": "{{b.{{b.b}}}}",
+        "context": {
+            "b": {
+                "b": "c",
+                "c": "holaa"
+            }
+        },
+        "expected": "holaa"
+    },
+    {
+        "template": "{{b.(b.b)}}",
+        "context": {
+            "b": {
+                "b": "c",
+                "c": "holaa"
+            }
+        },
+        "expected": "holaa"
+    },
+    {
+        "template": "{{#each loop }} {{.}}{{/each}}",
+        "context": {
+            "loop": [5, 4, 3]
+        },
+        "expected": "543"
+    },
+    {
+        "template": "{{each loop joint=','}}",
+        "context": {
+            "loop": [5, 4, 3]
+        },
+        "expected": "5,4,3"
+    },
+    {
+        "template": "{{#each loop joint=','}}{{.}}{{/each}}",
+        "context": {
+            "loop": [5, 4, 3]
+        },
+        "expected": "5,4,3"
+    },
+    {
+        "template": "",
+        "context": [],
+        "expected": ""
+    }
+]

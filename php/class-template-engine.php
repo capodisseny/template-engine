@@ -8,6 +8,7 @@ define("ENGINE_RETURN_EMPTY", "ENGINE_RETURN_EMPTY");
 define("ENGINE_IS_FIRST", "ENGINE_IS_FIRST");
 define("ENGINE_IS_LAST", "ENGINE_IS_LAST");
 define("ENGINE_NO_CARRY", "ENGINE_NO_CARRY");
+define("ENGINE_STOP_CONTENT", "ENGINE_STOP_CONTENT");
 
 
 //website builder scenarios
@@ -124,6 +125,7 @@ class TemplateEngine{
         $this->registerHelper("each",[
             "render"=>function($loop, $options){
       
+   
                 if(!is_array($loop)) return;
 
                 $source = "";
@@ -173,7 +175,7 @@ class TemplateEngine{
             
             "render"=>function($yes, $condition, $check, $val, $options){
                
-                if($yes) return;
+                if($yes) return $options["stop"];
          
 
                //else if
@@ -191,8 +193,6 @@ class TemplateEngine{
 
                 return array_merge($block, [
                     "type"=>"block",
-                    // "name"=>"else",
-                    // "close"=>true,
                     "args"=>$parentBlock["args"],
                 ]);
         
@@ -202,6 +202,7 @@ class TemplateEngine{
         $this->registerHelper("toJSON",function($json, $options){
         
             if(!($options["fn"] ?? false)){
+
                 return json_encode($json);
             }
 
@@ -289,6 +290,11 @@ class TemplateEngine{
     }
     public function registerHelper($id, $callbackOrOptions){
 
+        if(is_callable($callbackOrOptions)){
+            $callbackOrOptions = [
+                "render"=>$callbackOrOptions
+            ];
+        }
         $this->helpers[$id] = $callbackOrOptions;
 
     }
@@ -660,7 +666,8 @@ class TemplateEngine{
                 die("its ok???");
             }
 
-       
+
+
 
             // if($part == "." || $name == "." || $args == "."){
             //     dump($part, $name, $args, $s);
@@ -674,6 +681,18 @@ class TemplateEngine{
             $content = &$this->setupHelper($name, $content, $args);
 
          
+            $content["name"] = $name;
+
+
+            // if($name == "toJSON"){
+
+            //     dump($content);
+
+            //     dump($content["helperFn"](array("asdads"), []));
+
+            //     die("laksdjalk");
+            // }
+       
             // $content = &$v;
             if($was == "inline" && $content["type"] == "block") {
                 $content["close"] = true;
@@ -697,7 +716,14 @@ class TemplateEngine{
             //parse arguments
             if(!isset($content["args"])){
 
-                $content["args"] = $this->parseArguments($args, $content);
+                if(strpos($args, "(") !== false){
+                    $args = preg_replace_callback("/\)|\(/", function($m) {
+                        return $m == "("? "{{": "}}";
+                    }, $args);
+                    $content["args"] = $this->compile($args);
+                }else{
+                    $content["args"] = $this->parseArguments($args, $content);
+                }              
               
             }
 
@@ -716,6 +742,7 @@ class TemplateEngine{
             "named"=>[],
             "ordered"=>array_fill(0,  ($content["numberArgs"]  ?? 1) -1 , null)
         ];
+
         $index = 0;
         foreach($args as $arg ){
 
@@ -729,7 +756,7 @@ class TemplateEngine{
             }
             
             if(substr($arg, 0, 1) == '"' || substr($arg, 0, 1) == "'") $arg = substr($arg, 1, -1);
-            else $arg = preg_split("/\s+/", $arg);
+            else $arg = explode(".", $arg);
 
             if($name){
                 $expArgs["named"][$name] = $arg;
@@ -740,7 +767,7 @@ class TemplateEngine{
             $index++;
         }
 
-         $expArgs;
+        return  $expArgs;
     }
 
     //set the return by reference
@@ -754,6 +781,8 @@ class TemplateEngine{
         if($name && is_string($name)) $helper =  $this->getHelper($name);
         if(!$helper && $args && is_string($args)) $helper =  $this->getHelper($args);
     
+
+
         //skip not found helpers
         if($name && !$helper){  
         
@@ -773,14 +802,14 @@ class TemplateEngine{
             $content = $compiler($content, $parent, $args);
         }
         
-
-        $content["mag"] = true;
          
         //render function
-        $content["render"] = function($context) use ( &$content){
+        if($content["type"] == "block"){
+            $content["render"] = function($context) use ( &$content){
         
-            return $this->renderContent( $content, $context);
-        }; 
+                return $this->renderContent( $content, $context);
+            }; 
+        }
 
         //get value function
         // $content["getValue"] = function($context = false) use(&$args){
@@ -788,23 +817,34 @@ class TemplateEngine{
         // };
 
 
-        $helperRender =  $helper;
-        if(is_array($helper)){
-            $helperRender = $helper["render"] ?? false;
-        }
+        $helperRender =  $helper["render"] ?? false;
+      
         $content["helperFn"] =  $helperRender;
 
         if($helperRender && is_callable($helperRender)){
 
-            $reflection = new ReflectionFunction($helperRender);
+            $reflection = new \ReflectionFunction($helperRender);
                 // echo $reflection->getNumberOfParameters();      // Output: 3
                 // echo $reflection->getNumberOfRequiredParameters(); // Output: 2
             $content["numberArgs"] = $reflection->getNumberOfParameters();   
         }
 
+        //compileArgs
         if(is_array($helper) && isset($helper["compileArgs"])){
 
             $content["args"] = $helper["compileArgs"]($args);
+        }
+
+        //filterArgs
+        if(is_array($helper) && isset($helper["filterArgs"])){
+
+            $content["filterArgs"] = $helper["filterArgs"];
+        }
+
+        //validateContent
+        if(is_array($helper) && isset($helper["validateContent"])){
+
+            $content["validateContent"] = $helper["validateContent"];
         }
 
         return $content;
@@ -884,36 +924,11 @@ class TemplateEngine{
         $precompiled = $exp["precompiled"] ?? false;
         $type = $exp["type"] ?? false;
 
-        // if(!$exp["part"]){
 
-            
-        //     dump(json_decode(json_encode($exp)));
-        //     die("ñlkasdlñak");
-        // }
-
-        // if($exp["part"] == "."){
-        //     dump($args);
-        //     die("lkasdjalksjdlak");
-        // }
-        // if($context == "900"){
-        //     dump($args);
-        //     die("asdasd");
-        // }
 
         $parsedArgs = $this->getArgs($exp, $args, $context);
 
-        if($isMain){
-            unset($this->currentTemplate );
-            $this->currentTemplate = $exp;
-        }
-
-        if(!is_string($args) && is_callable($args)){
-            $args = $args($context);
-            dump("nessted?");
-            dump($args);
-            die();
-        }
-
+    
         if(!is_string($name) && is_callable($name)){
             //Rething that, because if is a dynamic name can not be compiled 
             //so here we would loose speed
@@ -921,10 +936,21 @@ class TemplateEngine{
             $name = $name($context);
         }
 
+
+        //INIT VALUE
         $value;
 
+        //inline
+        if(!isset($exp["helperFn"]) && $type == "inline"){
+
+            $value =  $parsedArgs["ordered"][0] ?? null;
+
+        }
         //processed helpers
-        if($isMain){
+        else if($isMain){
+            unset($this->currentTemplate );
+            $this->currentTemplate = $exp;
+
             $value = $this->renderContent($exp, $context);
         }
         //precompiled
@@ -941,30 +967,32 @@ class TemplateEngine{
             $ordered = $parsedArgs["ordered"] ?? [];
             $named = $parsedArgs["named"] ?? [];
 
+    
             // \Closure::bind( $template, $this)($context->props ?? false , $context);
-            $value = call_user_func_array( [...$ordered , ["fn"=>$exp["render"],"context"=>$context, "args"=>$named ] ]  );
+            $value = call_user_func_array($exp["helperFn"],  [...$ordered , ["fn"=>$exp["render"] ?? false,"context"=>$context, "args"=>$named ] ]  );
 
         }
         //default behavour
-        else if($type == "inline"){
-
-            $value =  $parsedArgs[0] ?? false;
-
-
-        }else{
-
-            // $value = $this->get($args[0], $context);
-           
-            $value =  $parsedArgs[0] ?? false;
+        else{
 
             //return empty
-            if(!$value) {
-                $value = ENGINE_RETURN_EMPTY;
+            if(!$this->validateContent($exp, $parsedArgs)){ 
+                return ENGINE_RETURN_EMPTY;
             }
             //return the content
             else $value = $this->renderContent($exp, $context);
         }
         return $this->filterValue($value);
+
+    }
+    private function validateContent($exp , $parsedArgs){
+
+        if($exp["validateContent"] ?? false){
+            return $exp["validateContent"]($parsedArgs, $exp);
+        }
+
+        return   $parsedArgs["ordered"][0] ?? false;
+
 
     }
     private function get($path, $context){
@@ -978,7 +1006,14 @@ class TemplateEngine{
             $i++;
             // const last = index === paths.length - 1;
             if(!$value) return;
-            $value = $value[$steps[$i]] ?? null;
+
+            if(is_object($value)){
+                $key = $steps[$i] ?? null;
+                $value = $value->$key ?? null;
+            }else{
+                $value = $value[$steps[$i]] ?? null;
+            }
+          
         }
         return $value;
     }
@@ -1082,8 +1117,10 @@ class TemplateEngine{
 // $d = $engine->render("{{#each loop }} {{.}}{{/each}}", ["loop"=>[54,53,2]]  );
 // $d = $engine->render("{{#each loop }} {{.}}{{/each}}", ["loop"=>[54,53,2]]  );
 
-// dump($d);
+// // dump($d);
 // // $d = $engine->render("{{if props.colors.main --swiper-theme-color: {{props.colors.main}}; }}" );
-// dump("asd");
+// // dump("asd");
 // // dump($d($ctx) );
 // die("asdasda");
+
+

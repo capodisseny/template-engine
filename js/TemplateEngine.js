@@ -5,6 +5,8 @@ const ENGINE_IS_LAST =  Symbol();
 const ENGINE_NO_CARRY =  Symbol();
 const ENGINE_VALUE_UNDEFINED =  Symbol();
 
+const ENGINE_STOP_CONTENT =  Symbol();    
+
 
 // Class Definition
 class TemplateEngine {
@@ -72,17 +74,15 @@ class TemplateEngine {
 
           render: function(condition, val, defaultVal, options) {
 
+            //inline
             if (!options.fn) {
-                if (condition){
-                    return val;
-                } else{
-                    return defaultVal || ENGINE_RETURN_EMPTY;
-                }
+                if (condition)  return val;
+                return defaultVal;
               
-            } else {
-                if (!condition) return  ENGINE_RETURN_EMPTY;
-              return options.fn(this);
             }
+            //block
+            if (!condition) return;
+            return options.fn(this);
           },
         });
     
@@ -91,17 +91,13 @@ class TemplateEngine {
                 //set tsame value as parent
                args.ordered[0] =  this.parent.args.ordered[0];
             },
-          render: function (yes, condition, check, val ,  options) {
-  
-            if (yes) return ENGINE_RETURN_EMPTY;
+          render: function (yes, condition, check, val ,  options) {    
+            //main is true
+            if (yes) return;
+            // if (yes) return options.stop;
 
-            if(!options){
-                debugger
-            }
-            //else if
-            if(condition == "if" && !check){
-                return ENGINE_RETURN_EMPTY;
-            }
+            //false else if
+            if(condition == "if" && !check) return ;
 
             //default else
             if(options.fn) {
@@ -150,19 +146,23 @@ class TemplateEngine {
         //compiled args
         if(typeof args == "function"  ) {
             
+            const old = this.returnArrayOrValue;
+             this.returnArrayOrValue = false;
             args = args(context);
-            args = args.split(/\s+/);
+             this.returnArrayOrValue = old;
+
+            args = this.parseArguments(args, exp);
         }
 
 
         const named = {};
-        const orderedArgs = args["ordered"] ?? [];
-        const namedArgs = args["named"] ?? [];
+        const orderedArgs = args.ordered ?? [];
+        const namedArgs = args.named ?? [];
         
         Object.keys(namedArgs).forEach((name)=>{
             let arg = namedArgs[name]
             let value;
-            if(!value) value = value;
+            if(!arg) value = value;
             else if(arg == ".")  value =  context;
             else if(typeof arg == "string")  value = arg;
             else value = this.get(arg, context);
@@ -172,10 +172,11 @@ class TemplateEngine {
 
         const ordered = orderedArgs.map(arg=>{
             let value;
-            if(!value) value = value
+            if(!arg) value = value;
             else if(arg == ".")  value =  context;
             else if(typeof arg == "string")  value =  arg;
             else value = this.get(arg, context);
+            
 
             return value
 
@@ -498,7 +499,6 @@ class TemplateEngine {
               name = s[2]
               args = s[1]
           }
-  
 
          
           content.name = name;
@@ -519,13 +519,12 @@ class TemplateEngine {
           //compile arguments
           if(!content.args){
                //check if has dynamic content
-              if(args.includes("(")){
-                    args = args.replaceAll("(", "{{").replaceAll(")", "}}");
-                    this.compilingArgs = true;
+              if(args.includes("(") || args.includes("{{")){
+                    args = args.replaceAll(/\(|\)/g, ( s)=>{
+                        return s == "(" ? "{{" : "}}"
+                    })
                     args = this.compile(args);
-                    this.compilingArgs = false;
               }else{
-                
                     args = this.parseArguments(args, content);
               }
   
@@ -537,6 +536,8 @@ class TemplateEngine {
       return content;
     }
      parseArguments(args, exp){
+
+
 
         args = args.trim().split(/\s+/ );
 
@@ -565,7 +566,7 @@ class TemplateEngine {
           }
           //PATH
           else{
-            arg = arg.split(/\s+/)
+            arg = arg.split(".")
           }
 
           //Where to save it
@@ -618,8 +619,11 @@ class TemplateEngine {
                 content.filterArgs = helper.filterArgs;
         }
     
+        if(helper.validateContent){
+            content.validateContent = helper.validateContent;
+        }
 
-        content.render = (context) => this.renderContent(content, context);
+        if(content.type == "block") content.render = (context) => this.renderContent(content, context);
 
         content.helperFn = helper.render || helper
     
@@ -637,41 +641,45 @@ class TemplateEngine {
     }
   
     filterValue(value, last = false) {
+
+    
+        if(ENGINE_STOP_CONTENT == value) return ENGINE_STOP_CONTENT;
   
-      if (last) {
-          if (Array.isArray(value) && value.length === 1) {
-            return value[0]; // Return the single value if only one exists
-          }
-          return value;
-      }
-  
-      if (value === ENGINE_RETURN_EMPTY) {
-        if (this.returnArrayOrValue) return ;
-        return "";
-      }
-  
-      if(!this.returnArrayOrValue){
-  
-          const t = typeof value 
-          if (t !== "string") {
-              if (t === "function") {
-                throw new Error("Value by default is not callable. Use a Helper.");
-              }
-              if (Array.isArray(value)) {
-                return "[ARRAY]";
-              }
-              if (t === "object") {
-                return "[OBJECT]";
-              }
-              if(!value) return "";
-  
-              return String(value);
+        if (last) {
+            if (Array.isArray(value) && value.length === 1) {
+                return value[0]; // Return the single value if only one exists
             }
-  
-       
-      }
-  
-      return value;
+            return value;
+        }
+    
+        if (value === ENGINE_RETURN_EMPTY) {
+            if (this.returnArrayOrValue) return ;
+            return "";
+        }
+    
+        if(!this.returnArrayOrValue){
+    
+            const t = typeof value 
+            if (t !== "string") {
+                if (t === "function") {
+                    throw new Error("Value by default is not callable. Use a Helper.");
+                }
+                if (Array.isArray(value)) {
+                    return "[ARRAY]";
+                }
+                if (t === "object") {
+                    return "[OBJECT]";
+                }
+                if(!value) return "";
+    
+                return value;
+            
+            }
+    
+        
+        }
+    
+        return value;
     }
   
     renderPart(exp, context) {
@@ -681,7 +689,6 @@ class TemplateEngine {
         const { helperFn, args = [], type, main } = exp;
         let value;
         if(main) this.currentTemplate = exp;
-    
     
   
         //{{some.prop}} 
@@ -704,18 +711,27 @@ class TemplateEngine {
             const parsedArgs = this.getArgs(exp, args, context);
             const ordered = parsedArgs.ordered ||[];
             const named = parsedArgs.named ||{};
-            value = helperFn.call(context, ...ordered, {context, fn:exp.render, args:named});
+            value = helperFn.call(context, ...ordered, {context, fn:exp.render, args:named, stop:ENGINE_STOP_CONTENT});
         }
         
         // {{#some.prop}}the content{{/some.prop}}
         else {
             const parsedArgs = this.getArgs(exp, args, context);
-            const ordered = parsedArgs.ordered ||[];
-            if(!ordered[0]) value =  ENGINE_RETURN_EMPTY
+
+
+            if(!this.validateContent(exp, parsedArgs)) value =  ENGINE_RETURN_EMPTY
+
             else value = this.renderContent(exp, context);
         }
     
         return this.filterValue(value);
+    }
+    validateContent(exp, parsedArgs){
+
+        if(exp.validateContent){
+            return exp.validateContent(parsedArgs);
+        }
+        return parsedArgs.ordered[0] || ENGINE_RETURN_EMPTY;
     }
   
     get(path, context) {
@@ -749,11 +765,25 @@ class TemplateEngine {
   
       if (!exp.content || exp.content.length === 0) return;
   
-      exp.content.forEach((c) => {
+      for(let k in exp.content){
+        const c = exp.content[k];
         let value = this.renderPart(c, context);
+
+        //skip empty values
+        if(this.returnArrayOrValue ){
+            if(typeof value == "string" ){
+                value = value.trim();
+                if(value == "") continue
+            } 
+            if(value === undefined) continue;
+        }
+
+       
+        if(value === ENGINE_STOP_CONTENT) break;
+
         result = this.joinValue(result, value);
-      });
-  
+      }
+    
       return this.filterValue(result, true);
     }
   
@@ -770,13 +800,29 @@ class TemplateEngine {
      // Return the final result (either a concatenated string or an array)
      return result;
     }
+
+    static test(data){
+
+        const engine = new TemplateEngine();
+
+        return data.map(test => {
+
+            const result = engine.render(test.template, test.context);
+
+            const expected= test.expected ?? ""
+
+            return {
+                test,
+                result,
+                expect:test.expected,
+                passed: result.replaceAll(/\s+/g, "") === expected.replaceAll(/\s+/g, ""),
+            }
+
+        });
+
+    }
   }
   
-
-
-
-
-
 
 // // Example usage:
  engine = new TemplateEngine();
