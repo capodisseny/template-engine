@@ -1,4 +1,4 @@
-// Define constants
+// // Define constants
 const ENGINE_RETURN_EMPTY =  Symbol();
 const ENGINE_IS_FIRST =  Symbol();
 const ENGINE_IS_LAST =  Symbol();
@@ -7,10 +7,23 @@ const ENGINE_VALUE_UNDEFINED =  Symbol();
 
 const ENGINE_STOP_CONTENT =  Symbol();    
 
+/**
+ * 
+references:
+- https://www.npmjs.com/package/curly-bracket-parser
+    this one has cool things like:
+        - set global variables 
+        - nested variables  
+            var1= "some {{var2}}" var2 = " nested {{var3}}" ctx = {var2, var3:"holaa"} 
+            renders:  some nested holaa 
+-https://www.npmjs.com/package/g2-bracket-parser
+ */
 
+// import Parser from "Parser.js"
 // Class Definition
 class TemplateEngine {
-    constructor() {
+   
+    constructor(options) {
   
       this.helpers = {};
       this.templates = new Map();
@@ -20,17 +33,38 @@ class TemplateEngine {
       this.partial = ">";
       this.returnArrayOrValue = false; 
       this.precompileId = 0;
+      
+      this.debug = options?.debug
   
       this.precompilers = {};
+
+    //   this.parser = new Parser({
+    //     filterArguments:this.filterArguments
+    //   });
   
       this.char2 = this.char.map((char) => char + char);
       this.char3 = this.char.map((char) => char + char + char);
   
       // Initialize helpers
       this.setDefaultHelpers()
+
+    //   Object.assign(this, new Parser() )
   
-     
     }
+
+    filterArguments(parent, source, process){
+
+        if(parent.filterArgs){
+
+
+            return parent.filterArgs(parent, source, process)
+        }
+    }
+
+
+    // parse(s, options){
+    //     return this.parser.parse(s, options);
+    // }
   
     setDefaultHelpers() {
   
@@ -40,10 +74,11 @@ class TemplateEngine {
               return "custom render"
           },
         });
+
       this.registerHelper("each", {
           render: function(loop, options) {
 
-            const args = options.args
+            const args = options.hash
 
             if (!Array.isArray(loop)) return "";
     
@@ -52,15 +87,14 @@ class TemplateEngine {
             let source = [];
             loop.forEach((value, k) => {
                 let v
-                if(!options.fn){
+                if(!options.content){
                     v = value
                 }
                 //block
                 else{
-                     v = options.fn(value);
+                     v = options.content(value);
                 }
 
-                console.log("v", v)
                 source.push(v)
             });
             return source.join(joint);
@@ -75,59 +109,63 @@ class TemplateEngine {
           render: function(condition, val, defaultVal, options) {
 
             //inline
-            if (!options.fn) {
+            if (!options.content) {
                 if (condition)  return val;
                 return defaultVal;
               
             }
             //block
             if (!condition) return;
-            return options.fn(this);
+            return options.content(this);
           },
         });
+        this.registerHelper("random",function(){
+            return Math.random()
+        })
     
         this.registerHelper("else", {
-            filterArgs(args){
-                //set tsame value as parent
-               args.ordered[0] =  this.parent.args.ordered[0];
-            },
-          render: function (yes, condition, check, val ,  options) {    
-            //main is true
-            if (yes) return;
-            // if (yes) return options.stop;
+         
+            render: function (yes, condition, check, val ,  options) {    
+                //main is true
+                if (yes) return;
+                // if (yes) return options.stop;
 
-            //false else if
-            if(condition == "if" && !check) return ;
+                //false else if
+                if(condition == "if" && !check) return ;
 
-            //default else
-            if(options.fn) {
-                if(typeof options.fn !== "function"){
-                    debugger
+                //default else
+                if(options.content) {
+                    if(typeof options.content !== "function"){
+                        debugger
+                    }
+                    return  options.content(this)
                 }
-                return  options.fn(this)
-            }
 
-            return val;
-          },
-          compiler: (block, parentBlock, args) => {
-  
-              Object.assign(block, {
-                  type: "block",
-                
-                })
-          
-          },
+                return val;
+            },
+            filterExpression(newExp, process){
+
+                //remove {{if}} block or other
+                process.stack.pop()
+                const parent = process.stack.at(-2)
+                process.currentExpression = process.stack.at(-1)
+                newExp.type = "block"
+                //copy first argument from parent
+                newExp.args.list.push(parent.args.list[0])
+
+            },
+        
         });
     
         this.registerHelper("toJSON", function (json, options) {
-          if (!options.fn) {
+          if (!options.content) {
             return JSON.stringify(json);
           }
         });
     
         this.registerHelper("js", {
             compileArgs: (args) => args,
-            getArgs: (args) => ({ordered:args}),
+            getArgs: (args) => ({list:args}),
             render: function(code) {
                 let ids = 0;
                 const id = "exp_" + ids;
@@ -139,57 +177,66 @@ class TemplateEngine {
         });
     }
   
-    getArgs(exp, args, context) {
+    getArgs(exp, context) {
     
+
         if(exp.getArgs) return exp.getArgs(args, context);
     
         //compiled args
         if(typeof args == "function"  ) {
             
-            const old = this.returnArrayOrValue;
-             this.returnArrayOrValue = false;
-            args = args(context);
-             this.returnArrayOrValue = old;
+            throw new Error("Invalid arguments", args)
+            // const old = this.returnArrayOrValue;
+            //  this.returnArrayOrValue = false;
+            // args = args(context);
+            //  this.returnArrayOrValue = old;
 
-            args = this.parseArguments(args, exp);
+            // args = this.parseArguments(args, exp);
         }
 
+        const hash = {};
+        const orderedArgs = exp.args.list ?? [];
+      
+        const namedArgs = exp.args.hash ?? {};
+    
+        const listArgs = exp.protoList ?? [];
 
-        const named = {};
-        const orderedArgs = args.ordered ?? [];
-        const namedArgs = args.named ?? [];
-        
         Object.keys(namedArgs).forEach((name)=>{
-            let arg = namedArgs[name]
-            let value;
-            if(!arg) value = value;
-            else if(arg == ".")  value =  context;
-            else if(typeof arg == "string")  value = arg;
-            else value = this.get(arg, context);
 
-            named[name] = value;
+            hash[name] = this.getArgumentValue(namedArgs[name], context)
         })  
 
-        const ordered = orderedArgs.map(arg=>{
-            let value;
-            if(!arg) value = value;
-            else if(arg == ".")  value =  context;
-            else if(typeof arg == "string")  value =  arg;
-            else value = this.get(arg, context);
-            
-
-            return value
-
+        const list = listArgs.map((arg,i)=>{
+            if(!orderedArgs.hasOwnProperty(i)) return 
+            return  this.getArgumentValue(orderedArgs[i], context)
         })
         
-      
-      return {named, ordered};
+      return {hash, list};
 
+    }
+    getArgumentValue(arg, context){
+       
+        let value;
+        if(!arg?.type)debugger
+        const type = arg.type;
 
+        if(type == "string"){
+            return arg.value;
+        }
+        if(type == "getter"){
+            if(arg.value == "." ) return context;
+            return this.get(arg.value, context);
+        }
+        if(arg.type == "root"){
+            return this.renderContent(arg.content, context);
+        }
+       
+        return value
+    }
+    filterExpression(newExp, process){
 
-
-
-
+        
+        this.setupHelper(newExp.name, newExp, newExp.args)
     }
   
     registerCompiler(id, callback) {
@@ -214,7 +261,11 @@ class TemplateEngine {
   
       const fn = (context = {}, returnArrayOrValue = this.returnArrayOrValue) => {
           this.returnArrayOrValue = returnArrayOrValue;
-          return this.renderPart(template, context);
+
+          return this.renderExpression(template, context);
+      }
+      if(this.debug){
+            fn.template = template
       }
       this.templates.set(string, fn);
   
@@ -239,9 +290,10 @@ class TemplateEngine {
     }
   
   
+   //OLD COMPILER, fails whith json like: {{some '{some:{laca:\"ss\"}}'}}
     compile(str, run = false, context = []) {
         
-        if (!str) return str;
+        if (!str) return ()=>str;
     
         const exist = this.getTemplate(str);
         if (exist) {
@@ -267,136 +319,21 @@ class TemplateEngine {
         }
     
     
-        // const reg = /((?:{{{|{{)(?:(?R)|.)+?(?:}}}|}}))/;
-        //Js doesn't allow recurson so we need a custom function to find matches equal to php
-        // const reg = /({{|}}}|}})/ 
-        // const reg = /({{|}})(?=[^}])/
-        // const reg = /({{|}}(?=[^}]|$))/
     
-        //explanation  find {{{? or inner }} or find inner ) or find }}}?
-        const reg = /({{{?|}}(?=.*}})|(?:\(|\))(?=.*}})|}}}?(?=[^}]|$))/
-        const split = str.split(reg);
-    
-        const template = {
-            main: true,
-            source: originalStr,
-            content: [],
-        };
         let result = this.returnArrayOrValue ? [] : "";
-        this.currentTemplate = template;
-    
-        const blockStack = [template];
-        this.blockStack = blockStack;
 
-        let buildPart = "";
-        let innerStack = 0;
-        let part = "";
-        const debug = {
-            part:[],
-            content:[]
-        }
-        
-    
-        const inStack = [];
-        split.forEach((s) => {
-    
-            if(s === "") return;
-            
-            //open tag or inner tag
-            if(s.slice(0, 2) == "{{" ){
 
-                innerStack++;
-                buildPart += s;
-                    
-            }   
-            //close tag or close inner tag
-            else if(s.slice(-2) == "}}" ){
-                
-                innerStack--;
-                buildPart += s;
+    
+        const ast = this.parse(str)
 
-                //reset part
-                if(innerStack === 0){
-                    part = buildPart;
-                    buildPart = ""
-                }
-            }
-            //single string
-            else if(innerStack !== 0) buildPart += s;
-            
-            //default
-            else  part = s;
+        this.currentTemplate = ast;
     
-    
-            if(innerStack < 0){
-                throw new Error("Broken block, check for unclosed blocks.");
-            }
-            
-    
-            //part is not complete
-            if(innerStack !== 0) return ;
-            
 
-            console.log(":::PART:::", part, innerStack)
-            debug.part.push(part)
-    
-            //LIKE PHP
-            // Process expression
-            const content = this.processExpression(part);
-            
-    
-            debug.content.push(part)
-            console.log(":::expression:::", content)
+        // debug.template = ast
+        //  console.log(debug)
     
     
-            const openNewBlock = content.close;
-    
-    
-            // Render content when required
-            if (run) {
-                let render = false;
-    
-                if (blockStack.length === 2 && openNewBlock) {
-                    render = blockStack[blockStack.length - 1];
-                }
-                if (blockStack.length === 1 && content.type !== "block") {
-                    render = content;
-                }
-                if (render) {
-                    const value = this.renderPart(render, context);
-                    result = this.joinValue(result, value);
-                }
-            }
-    
-            // Remove old block from stack if needed
-            if (openNewBlock) {
-                blockStack.pop();
-            }
-
-            if(content.type === "closeBlock") return;
-    
-            // Add content to current block
-            if (blockStack.length) {
-              
-                const currentBlock = blockStack[blockStack.length - 1];
-                currentBlock.content.push(content);
-                
-            } else {
-                throw new Error("Broken block, check for unclosed blocks.");
-            }
-    
-            //append new block to stack
-            if (content.type === "block") {
-                blockStack.push(content);
-            }
-        });
-    
-    
-        debug.template = template
-        console.log(debug, split)
-    
-    
-        const r = this.saveTemplate(originalStr, template);
+        const r = this.saveTemplate(originalStr, ast);
     
         if (run) {
             return this.filterValue(result, true);
@@ -404,231 +341,54 @@ class TemplateEngine {
         return r;
     }
   
-   
-    processExpression(part, inner = false) {
-      const char = this.char;
-      const char2 = this.char2;
-  
-      const isExpression = part.startsWith(char2[0]);
-  
-      if (!isExpression && !inner) return part;
-  
-      // if( inner ){
-      //     if(part.slice(0, 1) == "(") part = part.slice(1, -1).trim();
-      //     else if(!isExpression){
-      //         return part
-      //     }else{
-      //         part = part.slice(2, -2).trim();
-      //     }
-  
-      // }else{
-      //     // from {{some.prop}} to some.prop
-      //     part = part.slice(2, -2).trim();
-  
-      // }
-  
-      part = part.slice(2, -2).trim();
-  
-  
-  
-      //Check first character
-      let first = part[0];
-      let triple = first === char[0];
-      if (triple) {
-        part = part.slice(1, -1);
-        first = part[0];
-      }
-  
-  
-      //then block or inline
-      const openBlock = first === this.block[0];
-      const closeBlock = first === this.block[1];
-      const isInline = !openBlock && !closeBlock;
-  
-  
-     
-  
-      const isPrecompiled = part.slice( 0, 7) == "__pre__";
-  
-      const isEnd = closeBlock;
-  
-      const content = {
-          part,
-          type:isInline?"inline":"block",
-          triple,
-          close:isEnd,
-          parent: this.blockStack.at(-1),
-      }
-  
-      if( isPrecompiled ){
-          content.precompiled =  part.slice( 7, -1);
-      }
-  
-      if(closeBlock) content.type = "closeBlock";
-  
-      if(!closeBlock ){
-  
-         
-          //remove the block character
-          if(openBlock ) part = part.slice(1);
-  
-          //new first can be the definer (@, >, ...)
-          first = part[0];
-          
-          //if is not letter
-          if(!first.match(/^[.a-z0-9$]/i)){
-              part = part.slice(1);
-          }
-  
-          //limit in js works different
-          //["", "name", "args ...."]
-          const s  = part.match(/(\S+)\s*(.+)?/)
-          
-          const isNamed = s[2] ?? false;
-          let name = isNamed ? s[1]:false;
-          let args = isNamed ? s[2] : s[1] || "";
-  
-          //is helper
-          if(!name && first == "@"){
-              name = args;
-          }
-
-          //equivalent to {{name argss}} or {{@name argss}}
-          if(!name && args && args.includes("@")){
-              const s = args.match(/(.+)@(.+?)$/);
-              name = s[2]
-              args = s[1]
-          }
-
-         
-          content.name = name;
-         
-          //HELPER    
-          const was = content.type;
-          this.setupHelper(name, content, args);
-          
-          if(was == "inline" && content.type == "block") {
-              content.close = true;
-          }
-  
-          //open block
-          if(content.type == "block"){
-              content.content = []; 
-          }
-  
-          //compile arguments
-          if(!content.args){
-               //check if has dynamic content
-              if(args.includes("(") || args.includes("{{")){
-                    args = args.replaceAll(/\(|\)/g, ( s)=>{
-                        return s == "(" ? "{{" : "}}"
-                    })
-                    args = this.compile(args);
-              }else{
-                    args = this.parseArguments(args, content);
-              }
-  
-              content.args = args;
-          }
-  
-      }
-  
-      return content;
-    }
-     parseArguments(args, exp){
-
-
-
-        args = args.trim().split(/\s+/ );
-
-        const ordered = Array.from(Array(exp?.helperFn?.length - 1 || 0))
-        const named = {}
-        //loop over all the arguments
-        let orderIndex = 0
-
-        args.forEach((arg, i) => {
-          //context value
-          if(arg === ".") {
-                ordered[orderIndex++] = arg;
-              return;
-          }
-          //named
-          let name = false
-          if(arg.includes("=")){
-              const s = arg.match(/(.+?)=(.+)/);
-              name = s[1]
-              arg = s[2]
-          }
-
-            //STRING
-          if (arg.startsWith('"') || arg.startsWith("'")) {
-              arg = arg.slice(1, -1);     
-          }
-          //PATH
-          else{
-            arg = arg.split(".")
-          }
-
-          //Where to save it
-          //named
-          if(name){
-                 named[name] = arg;
-              return 
-          }
-          //ordered
-          ordered[orderIndex++] = arg;
-  
-        })
-
-
-
-        const allArgs = {ordered, named}
-        if(exp.filterArgs){
-
-            exp.filterArgs(allArgs)
-        }
-        return allArgs
-
-   
-
-    }
-  
-    setupHelper(name, content, args) {
+    setupHelper(name, expression, args) {
   
         let helper = this.getHelper(name);
         if(!helper ) helper = this.getHelper(args);
     
-        if (name && !helper) {
+       
+        if (name && !helper && expression.forceHelper ) {
             console.error(`Helper not found: '${name}'`);
         }
     
-        if(!helper) return;
+        if(!helper ) {
+   
+            //remove helper name if is not found
+            if(!expression.forceHelper){
+                expression.getter = expression.name;
+                expression.name = false
+            }
+      
+            return;
+        }
     
         const compiler = this.getCompiler(helper);
         if (compiler) {
-            const parent = this.blockStack.at(-1);
-            compiler(content, parent, args);
+
+            compiler(expression, args);
         }
-    
-    
+
         if (helper.compileArgs) {
-            content.args = helper.compileArgs(args);
+            expression.args = helper.compileArgs(args);
         }
 
         if (helper.filterArgs) {
-                content.filterArgs = helper.filterArgs;
+            expression.filterArgs = helper.filterArgs;
         }
     
         if(helper.validateContent){
-            content.validateContent = helper.validateContent;
+            expression.validateContent = helper.validateContent;
         }
 
-        if(content.type == "block") content.render = (context) => this.renderContent(content, context);
+        if(expression.type == "block") expression.renderContent = (context) => this.renderContent(expression.content, context);
 
-        content.helperFn = helper.render || helper
-    
-    
-        return content;
+        expression.helperFn = helper.render || helper
+
+        if(expression.helperFn){
+            const max = expression.helperFn?.length?expression.helperFn?.length - 1: 0;
+            expression.protoList = Array.from(Array(max))
+        }
+        return expression;
     }
   
     joinValue(carry, value) {
@@ -640,6 +400,7 @@ class TemplateEngine {
       return carry;
     }
   
+
     filterValue(value, last = false) {
 
     
@@ -681,26 +442,42 @@ class TemplateEngine {
     
         return value;
     }
+
+    renderExpression(exp, context) {
   
-    renderPart(exp, context) {
-  
-        if (typeof exp === "string") return exp;
-    
-        const { helperFn, args = [], type, main } = exp;
+
+        if(typeof exp !== "object") {
+
+            throw new Error("Invalid template", exp);
+        }
+        const { helperFn, type,  } = exp;
+
+        if (type === "string") return exp.value;
         let value;
-        if(main) this.currentTemplate = exp;
+
+        if(type == "root") this.currentTemplate = exp;
     
-  
         //{{some.prop}} 
         if (!helperFn && type === "inline") {
-            const parsedArgs = this.getArgs(exp, args, context);
-            const ordered = parsedArgs.ordered ||[];
-      
-            value = ordered[0];
+
+            if(exp.getter){
+                value = this.get(exp.getter, context)
+            }else{
+
+                //TODO: do i need this?
+                // const parsedArgs = this.getArgs(exp, context);
+                // const list = parsedArgs.list ||[];
+
+    
+            }
+            
+
+         
+            // value = list[0];
         } 
         //root
-        else if (exp.main) {
-            value = this.renderContent(exp, context);
+        else if (type == "root") {
+            value = this.renderContent(exp.content, context);
         }
         // {{__pre__compileId}} 
         else if (exp.precompiled) {
@@ -708,30 +485,65 @@ class TemplateEngine {
         }
         //{{helper some.prop}} 
         else if (helperFn) {
-            const parsedArgs = this.getArgs(exp, args, context);
-            const ordered = parsedArgs.ordered ||[];
-            const named = parsedArgs.named ||{};
-            value = helperFn.call(context, ...ordered, {context, fn:exp.render, args:named, stop:ENGINE_STOP_CONTENT});
+            const {list, hash} = this.getArgs(exp, context);
+   
+            value = helperFn.call(context, ...list, {context, content:exp.renderContent, hash, stop:ENGINE_STOP_CONTENT, exp, });
         }
         
+        //CONTENT
         // {{#some.prop}}the content{{/some.prop}}
         else {
-            const parsedArgs = this.getArgs(exp, args, context);
+           
+            //expression is a getter
+            if(exp.getter){
+                if(this.get(exp.getter, context)){
+                    value = this.renderContent(exp.content, context);
+                }
 
-
-            if(!this.validateContent(exp, parsedArgs)) value =  ENGINE_RETURN_EMPTY
-
-            else value = this.renderContent(exp, context);
+            //TODO check if i need this?
+            }else{
+                // const parsedArgs = this.getArgs(exp, context);
+                // if(!this.validateContent(exp, parsedArgs)) value =  ENGINE_RETURN_EMPTY
+                // else value = this.renderContent(exp.content, context);
+            }
+           
         }
-    
+
+
         return this.filterValue(value);
     }
+    renderContent(content, context) {
+  
+        let result = this.returnArrayOrValue ? [] : "";
+    
+        if(!content?.length) return 
+    
+        for(let c of content){
+
+          let value = this.renderExpression(c, context);
+  
+          //skip empty values
+          if(this.returnArrayOrValue ){
+              if(typeof value == "string" ){
+                  value = value.trim();
+                  if(value == "") continue
+              } 
+              if(value === undefined) continue;
+          }
+  
+          if(value === ENGINE_STOP_CONTENT) break;
+  
+          result = this.joinValue(result, value);
+        }
+      
+        return this.filterValue(result, true);
+      }
     validateContent(exp, parsedArgs){
 
         if(exp.validateContent){
             return exp.validateContent(parsedArgs);
         }
-        return parsedArgs.ordered[0] || ENGINE_RETURN_EMPTY;
+        return parsedArgs.list[0] ;
     }
   
     get(path, context) {
@@ -759,46 +571,28 @@ class TemplateEngine {
         return value;
     }
   
-    renderContent(exp, context) {
+   
   
-      let result = this.returnArrayOrValue ? [] : "";
-  
-      if (!exp.content || exp.content.length === 0) return;
-  
-      for(let k in exp.content){
-        const c = exp.content[k];
-        let value = this.renderPart(c, context);
 
-        //skip empty values
-        if(this.returnArrayOrValue ){
-            if(typeof value == "string" ){
-                value = value.trim();
-                if(value == "") continue
-            } 
-            if(value === undefined) continue;
-        }
 
-       
-        if(value === ENGINE_STOP_CONTENT) break;
+    render(templateStr, context = {}, returnArrayOrValue = false) {
 
-        result = this.joinValue(result, value);
-      }
+
+        if(!templateStr.includes("{{")) return templateStr;
+
+        // Set the returnArrayOrValue flag before rendering
+        this.returnArrayOrValue = returnArrayOrValue;
     
-      return this.filterValue(result, true);
-    }
-  
-    render(templateStr, context = [], returnArrayOrValue = false) {
-     // Set the returnArrayOrValue flag before rendering
-     this.returnArrayOrValue = returnArrayOrValue;
-  
-     // Compile and run the template
-     const result = this.compile(templateStr, true, context);
-  
-     // Reset the flag after rendering
-     this.returnArrayOrValue = false;
-  
-     // Return the final result (either a concatenated string or an array)
-     return result;
+        // Compile and run the temanalplate
+        const template = this.compile(templateStr);
+    
+        // Reset the flag after rendering
+        this.returnArrayOrValue = false;
+    
+        // Return the final result (either a concatenated string or an array)
+        const result =  template(context, returnArrayOrValue);
+
+        return result
     }
 
     static test(data){
@@ -821,13 +615,527 @@ class TemplateEngine {
         });
 
     }
+
+    analizeUntil( reqOrString, source, ){
+
+
+        let match = source.match(reqOrString);
+        if(!match) return [false, source.length]
+        let keep = true
+        let i = 0
+        let s = ""
+        let max = source.length
+        let stack = 0
+
+        // const openStack = []
+        // const closeStack = []
+        // const openStack = source.match(/{{/g)
+        // const closeStack = source.match(/}}/g)
+       
+        // asd  {{  {{   }}  }}
+
+        while(keep){
+            const char = source[i];
+
+            //save state of openining and closing brackets
+          
+            if(char == "}" && source[i-1] !== "\\"   && source[i+1] == "}" )  stack--;
+    
+            //if there is match and process brackets is closed, that's the point
+            if(match.index == i){
+                //everything is closed
+                if(stack == 0) {
+                    keep = false
+                    break;
+                }
+                //try from new position later
+                else{
+                   
+                    // const offset = match[0].length
+                    const offset = 1 //increment only by one
+                    const newMatch = source.slice(i).match(reqOrString);
+
+                    if(!newMatch) {
+                        console.log(i, reqOrString)
+                        console.log("thesource.:::",source)
+                        console.log("ss", s)
+                        debugger
+                    }
+                    newMatch.index = match.index + offset + newMatch.index
+                    match = newMatch
+                }
+
+                // {{ { { }} }}
+
+       
+            }
+
+            if(char == "{" && source[i-1] !== "\\"  && source[i+1] == "{" )  stack++;
+        
+        
+            if(i == max){
+                keep = false
+            }
+            s += char;
+            i++;
+        
+        }
+
+        if(stack !== 0){
+
+            debugger
+            throw new Error("Bracket not closed ")
+        }
+        return [s, i]
+
+    }
+    //spliting is much faster...
+    //but this way  maybe is more easy to understand and probably more debuggable too
+    //once parsed the speed would be the same, so we can save parsed on server
+       
+    parseExpression(source, process){
+
+        const rest = source
+        //start expression
+
+         const startPos = 2;
+         let first = source[startPos];
+         let second = source[startPos+1];
+
+         const isBlock = first == "#" || second == "#";
+         const isClose = first == "/" || second == "/";
+          const isHelper = first == "@" || second == "@"
+        
+         //END block
+         if(isClose){
+             //set index till the end of the block    
+             const end =  rest.indexOf("}}") + 2
+             process.stack.pop()
+
+             return source.slice(end)
+         }
+
+        
+         //add expression
+         process.totalExpressions++
+
+         //parse name
+         //space from the begginging and not passing the closing brackets
+         const spaced = rest.match(/^([^}]+?)\s+/)
+         let endName;
+ 
+         if(spaced){
+            //spaced
+            endName = spaced[0].length-1
+         }else{
+            // use analizeUntil in case is nested like {{some_{{meta@wp}}@wp}}
+            const [_, end] = this.analizeUntil(/}}/, source)
+            endName = end
+         }
+
+         
+         const namePos = [startPos, endName];
+         let name = source.slice(...namePos )
+
+         //remove first  not allowed "{@some" to "some" for clean name
+         //also allow open parenthesis for nested expressions
+         name = name.replace(/^[^a-zA-Z0-9(]{0,2}/, "")
+
+         if(first == "{"){
+            name = name.slice(0,-1) // remove clossing bracket
+         }
+
+         if(name.includes("(")){
+            name = name.replaceAll(/\(|\)/, (m)=>m == "("?"{{":"}}")
+         }
+
+         if(name.includes("{{")){
+            debugger
+            name = this.parse(name, process)
+         }
+
+
+         
+         const argsList = {
+             type:"argumentList",
+             list:[],
+             hash:{},
+         }
+
+         const subType = process.currentExpression.type == "argumentList"?"sub":(isBlock?"block":"inline")
+         const newExp = {
+             name,
+             first,
+             second,
+             forceHelper:isHelper,
+             args:argsList,
+             type:subType,
+             isExpression:true,
+         } 
+
+         if(this.filterExpression){
+            this.filterExpression(newExp, process)
+         }
+
+         if(newExp.type == "block"){
+            newExp.content = []
+         }
+
+         const currentExpression = process.currentExpression
+         //push expression
+          process.stack.push(newExp)
+
+          if(newExp.type == "sub"){
+                currentExpression.list.push(newExp)
+          }else{
+            process.currentExpression.content.push(newExp)
+          }
+        
+         //custom push
+         process.stack.push(argsList)
+
+         return source.slice(namePos[1])
+      
+
+    }
+    parseArgument(source, process){
+
+
+        let char = source[0]
+        let rest = source
+
+
+        const parentExp = process.stack.at(-2)
+
+        if(this.filterArguments){
+           const check =  this.filterArguments(parentExp, source, process)
+           if(check !== undefined){
+             return check
+           }
+        }
+
+          //close arguments
+          if(char == "}" && source[1] == "}" && source[2] !== "}"){
+
+            let end = 2;
+
+            //if has triple
+            if(parentExp.first == "{" && source[2] == "}") {
+                end++
+            }
+
+            //close arguments list
+            process.stack.pop()
+            process.currentExpression = process.stack.at(-1)
+
+            //close non block expressins (sub and inline)
+            if(parentExp.type !== "block"){
+                process.stack.pop()
+            }
+
+            return source.slice(end) ;
+
+        
+        }
+
+        // const helper = this.getHelper(parentExp.name)
+        
+        if(parentExp.helper){
+
+            debugger
+        }  
+        if(!rest.match)debugger
+        const named = rest.match(/^([a-zA-Z]\S+?)=(?=.)/)
+
+        let value , name, newSource;
+        //named
+        if(named){  
+            const [_, n, quote] = named
+    
+            name = n
+            source = rest = rest.slice(named[0].length)
+            char = rest[0]
+        }
+        
+        //string argument
+        if(char == "'" || char == '"'){
+
+            //match non escaped char " asdasom invalid\'  valid' "
+
+        
+            const reg = `([^\\\\]${char})( |}})`
+            const match = rest.match(new RegExp(reg))
+
+            if(!match) process.error()
+
+            const end = match.index + 2
+
+            
+            const val = source.slice(0, end).slice(1,-1)
+            if(val.includes("{{")){
+                value = this.parse(val, process)
+            }else{
+                value = {
+                    type:"string",
+                    value:val
+                }
+            }
+
+            // debugger
+            // if(source.slice(0, 4) == "'{}'"){
+            //     debugger
+            // }
+           
+
+            newSource = source.slice(end)
+
+
+
+        }
+        //getter argument
+        else if(char != " " && char !== "(") {
+        
+            const match = rest.match(/( |}})/);
+
+            if(!match){
+                debugger
+                throw new Error("Broken argument at " + i + " in " + source.slice(-10, +10));
+
+            }
+
+            const end =  match.index
+
+            value = {
+                type:"getter",
+                value:source.slice(0, end).split(".")
+            }
+
+            newSource = source.slice(end)
+
+
+        }
+        //subexpression
+        else if(char == "(") {
+
+                let [v, end] = this.analizeUntil(/\) /, source)
+
+                if(!v) debugger
+                v = v + ")"
+                v = v.replaceAll(/\(|\)/g, ( s)=>{
+                    return s == "(" ? "{{" : "}}"
+                })
+
+                const exp = this.parse(v, process)
+
+                value = exp                
+
+                newSource = source.slice(end+1)
+
+        }
+
+        if(value) {
+
+            if(name){
+                process.currentExpression.hash[name] = value
+            }else{
+                process.currentExpression.list.push(value)
+            }
+            
+            return newSource
+        }
+
+        //move to next character
+        if(char == " "){
+            return source.slice(1);
+        }
+
+
+        return source.slice(1)
+
+        // process.error()
+    }
+    parseContent(char, i, source, process){
+        const rest = source.slice(i)
+        // const match = rest.match("{{") ;
+        const [value, end] = this.analizeUntil("{{", source)
+
+        if(!process.currentExpression?.type ){
+            debugger
+        }
+        if(process.currentExpression.type == "argumentList" ){
+
+            process.error()
+            // throw new Error("Broken argument at " + i + " in " + source.slice(i-10, i+10))
+        }
+        if(!process.currentExpression){
+
+            process.error()
+
+            // throw new Error("Broken expression at " + i + " in " + source.slice(i-10, i+10))
+            // this.error("Broken expression at " + i + " in " + source.slice(i-10, i+10))
+         
+            return true;
+        }
+
+        if(!process.currentExpression.content?.push){
+            debugger
+        }
+        process.currentExpression.content.push( {
+            type:"string",
+            value:value,
+            start:i,
+            end ,
+        })
+
+        debugger
+
+        return end
+    }
+    
+
+    parse(source, parentProcess ){
+        
+  
+        const ast = {
+            type:"root",
+            content:[],
+            source,
+        }
+        const process = {
+            stack:[ast],
+            index:0,
+            error:()=> this.error(process),
+            currentExpression:ast,
+            //this helps to know if a current oppening or close is correct
+            // ex: {{js ()=>{Object.assign({}, {a:{some:"some"}}) }}}
+            // closeCharStack will be 0, but openCharStack will be 1
+            closeCharStack:0,
+            push(exp, newIndex){
+                
+                this.currentExpression.content.push(exp)
+                // exp.parent = this.currentExpression
+                this.stack.push(exp)
+
+                if(newIndex){
+                   return newIndex
+                }
+                if(exp.end){
+                   return  exp.end 
+                }
+               
+            },
+            source,
+            debug:{},
+            totalExpressions:0,
+          
+            // ...parentProcess,
+
+            
+        };
+
+
+        const debug = process.debug
+
+        let s = source
+
+        const exptectedExpressions = s.match(/{{[^/]/g)?.length ?? 0
+
+        if(!exptectedExpressions){
+            console.log(source)
+            throw new Error("No expressions found in " + source)
+        }
+
+        //  while(process.index < source.length ){
+        let lastS 
+        while( s ){
+          
+            if(s === lastS){
+                console.log("the source::::",source)
+                console.log("at::::", s)
+                throw new Error("Infinite loop:", lastS)
+
+            }
+            lastS = s
+
+            process.currentExpression = process.stack.at(-1)
+            process.currentString = s   
+
+
+            //opening
+            if(s[0]== "{" && s[1] == "{"){
+
+               
+                s =  this.parseExpression(s, process)   
+          
+                continue;
+            }
+
+            if( process.currentExpression.type == "argumentList"){
+
+                s = this.parseArgument(s, process)
+
+                continue;
+
+            }
+            //default
+             
+            //the content
+            if(s[0] == "}" && s[1] == "}" && s[2] !== "}") debugger
+
+            const [val, end] = this.analizeUntil( /{{/, s)
+     
+
+            process.currentExpression.content.push( {
+                type:"string",
+                value:val=== false?s:val, //the value or the rest of the string
+            })
+            s = s.slice(end)
+
+
+        }
+
+
+        const totalExpressions = process.totalExpressions
+        if(exptectedExpressions !== totalExpressions && this.debug){
+
+
+            console.error(`Total exppected expressions ${exptectedExpressions} but got ${totalExpressions} in "${source}"`)
+        }
+
+
+        if(parentProcess){
+
+            parentProcess.totalExpressions += totalExpressions
+       
+        }
+        return ast;
+
+    }
   }
   
 
 // // Example usage:
- engine = new TemplateEngine();
-// const engine = new TemplateEngine();
+//  const engine = new TemplateEngine({debug:true});
+//     engine.registerHelper("slot", function(options){
+
+//         return options.content?options.content({}):"no content"
+
+// })
+
+// //   engine.parse("{{#name some '{some:{sada}}' (nested some) }} some content {{/name}}")
+// // const engine = new TemplateEngine();
 // const ctx = { props: { colors: { main: "#fff" } } };
-// const result = engine.render("{{if props.colors.main --swiper-theme-color: {{props.colors.main}}; }}", ctx);
+// const result = engine.render("{{if props.colors.main '--swiper-theme-color: {{props.colors.main}};' }}", ctx);
 // console.log(result);
-export default TemplateEngine
+
+// 
+ export default TemplateEngine
+
+
+/**
+ * 
+  s= document.createElement("script")
+  s.setAttribute("src", "https://cdnjs.cloudflare.com/ajax/libs/handlebars.js/4.7.8/handlebars.min.js")
+  document.body.appendChild(s)
+ */
+

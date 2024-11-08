@@ -107,6 +107,7 @@ define("ENGINE_STOP_CONTENT", "ENGINE_STOP_CONTENT");
  */
 
 
+ //TODO: UPDATE LIKE JS WITH LINEAL PARSING
 
 class TemplateEngine{
 
@@ -118,13 +119,14 @@ class TemplateEngine{
     private $char3;
     private $block = ["#", "/"];
     private $partial = ">";
+    private $currentTemplate = false;
+    private $blockStack = false;
 
 
     public function __construct(){
 
         $this->registerHelper("each",[
             "render"=>function($loop, $options){
-      
    
                 if(!is_array($loop)) return;
 
@@ -390,7 +392,7 @@ class TemplateEngine{
         $str = preg_replace($reg, '<!-- skiped -->', $str);
 
         //css comments
-        $reg = '/\/\*.*{{.+}}.*\*\/';
+        $reg = '/\/\*.*{{.+}}.*\*\\/';
         // $str = preg_replace($reg, '', $str);
 
         //trim    
@@ -412,6 +414,7 @@ class TemplateEngine{
         }
 
 
+        //{jala:{epnyu:""}}
 
         $reg = "/((?:{{{|{{)(?:(?R)|.)+?(?:}}}|}}))/";
         $split = preg_split($reg, $str,  -1, PREG_SPLIT_NO_EMPTY | PREG_SPLIT_DELIM_CAPTURE);
@@ -677,7 +680,8 @@ class TemplateEngine{
 
             //HELPER    
             $was = $content["type"];
-            $old = &$content;
+
+
             $content = &$this->setupHelper($name, $content, $args);
 
          
@@ -736,36 +740,72 @@ class TemplateEngine{
         
     }
     private function parseArguments($args, &$content){
-        $args = preg_split("/\s+/", trim($args));
 
+
+        // $args = preg_split("/\s+/", trim($args));
+        // improved for named
+        $matches =[];
+        //reg 1 :    /(\S+?(?:\s*?=("|').+?[^\\]\2)?)\s+?/g
+        //reg 2: //can scape quotes
+        //reg 3 lookbehind: \S+?(?:\s*?=(?:'.+?(?<!\\)'|\".+?(?<!\\)\"))?(?=\s+?|$) 
+        // preg_match_all("/\S+?(?:\s*?=\s*(?:'(?:[^'\\]|\\.)*'|\"(?:[^\"]|\\.)*\"))?(?=\s+|$)/",  $args, $matches);
+
+        //HACK: I need to do this, i do [^\\] it breaks the expression
+         $s = '[\]';
+         preg_match_all("/\S{2,}?(?:\s*?=(?:'.+?[^$s]'|\".+?[^$s]\"))?(?=\s+?|$)/", $args , $matches, PREG_PATTERN_ORDER);
+
+
+        $len =  ($content["numberArgs"]  ?? 1) -1;
+
+        if($len < 0) $len = 0;
+
+        
         $expArgs = [
             "named"=>[],
-            "ordered"=>array_fill(0,  ($content["numberArgs"]  ?? 1) -1 , null)
+            "ordered"=>array_fill(0,   $len  , null)
         ];
 
+
         $index = 0;
-        foreach($args as $arg ){
+        if($matches[0]){
 
-            $name = false;
+            foreach($matches[0] as $arg ){
 
-            if(strpos($arg, "=")){
-                $s = [];
-                preg_match("/(.+?)=(.+)/", $arg, $s);
-                $name = $s[1];
-                $arg = $s[2];
+                $name = false;
+    
+                if(strpos($arg, "=")){
+                    $s = [];
+                    preg_match("/(.+?)=(.+)/", $arg, $s);
+                    $name = $s[1];
+                    $arg = $s[2];
+                 
+                }
+    
+    
+              //if doesn't fit more values in the ordered array
+              if(!$name &&    $index > ($len - 1)){
+                 continue;
+              }
+                
+                if(substr($arg, 0, 1) == '"' || substr($arg, 0, 1) == "'") $arg = substr($arg, 1, -1);
+                else if( $arg == ".") {
+                    //just kip
+                }
+                else $arg = explode(".", $arg);
+    
+                if($name){
+                    $expArgs["named"][$name] = $arg;
+    
+                    continue;
+                }
+                //
+                $expArgs["ordered"][$index] = $arg;
+                $index++;
             }
-            
-            if(substr($arg, 0, 1) == '"' || substr($arg, 0, 1) == "'") $arg = substr($arg, 1, -1);
-            else $arg = explode(".", $arg);
 
-            if($name){
-                $expArgs["named"][$name] = $arg;
-                continue;
-            }
-            //
-            $expArgs["ordered"][$index] = $arg;
-            $index++;
         }
+        
+
 
         return  $expArgs;
     }
@@ -785,9 +825,10 @@ class TemplateEngine{
 
         //skip not found helpers
         if($name && !$helper){  
-        
+            
             trigger_error("Helper not found: '$name'//" );
-            die("Helper not found");
+            // die("Helper not found");
+            return $content;
         }
 
         if(!$helper) return $content;
@@ -1026,7 +1067,13 @@ class TemplateEngine{
 
         $content = $part["content"];
 
-        if(empty($content)) return "empty";
+
+        if(empty($content)){
+
+            dump($part);
+            // die();
+            return "empty";
+        }
 
         foreach($content as $c){
 
