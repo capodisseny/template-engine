@@ -7,6 +7,18 @@ const ENGINE_VALUE_UNDEFINED =  Symbol();
 
 const ENGINE_STOP_CONTENT =  Symbol();    
 
+
+function escapeSpecial(value){
+    return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/'/g, '&#39;')
+                .replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/`/g, '&#96;');
+
+
+}
 /**
  * 
 references:
@@ -38,6 +50,9 @@ class TemplateEngine {
   
       this.precompilers = {};
 
+
+      this.options = options || {}
+
     //   this.parser = new Parser({
     //     filterArguments:this.filterArguments
     //   });
@@ -52,12 +67,12 @@ class TemplateEngine {
   
     }
 
-    filterArguments(parent, source, process){
+    filterArguments(expression, source, process){
 
-        if(parent.filterArgs){
+        if(expression.compileArgs){
 
 
-            return parent.filterArgs(parent, source, process)
+            return expression.compileArgs( source, process, expression)
         }
     }
 
@@ -159,13 +174,25 @@ class TemplateEngine {
     
         this.registerHelper("toJSON", function (json, options) {
           if (!options.content) {
-            return JSON.stringify(json);
+            const value =  JSON.stringify(json).replace(/}}/g, ' } } ');
+            
+            return value
+
           }
         });
     
         this.registerHelper("js", {
-            compileArgs: (args) => args,
-            getArgs: (args) => ({list:args}),
+            compileArgs: (source, process, exp) => {
+
+               const [js, end] =  this.analizeUntil(/}}/, source)
+               exp.args.list = [js]
+           
+
+               return source.slice(end)
+
+          
+            },
+            // getArgs: (args) => ({list:args}),
             render: function(code) {
                 let ids = 0;
                 const id = "exp_" + ids;
@@ -210,6 +237,12 @@ class TemplateEngine {
             if(!orderedArgs.hasOwnProperty(i)) return 
             return  this.getArgumentValue(orderedArgs[i], context)
         })
+
+        if(exp.filterArgs) {
+            const check = exp.filterArgs({hash, list},  context)
+
+            if(check !== undefined) return check
+        }
         
       return {hash, list};
 
@@ -368,10 +401,17 @@ class TemplateEngine {
             compiler(expression, args);
         }
 
+        //filter compilation
         if (helper.compileArgs) {
-            expression.args = helper.compileArgs(args);
+            expression.compileArgs = helper.compileArgs;
         }
 
+        //rebuild the getting args function
+        if (helper.getArgs) {
+            expression.getArgs = helper.getArgs;
+        }
+
+        //filter args
         if (helper.filterArgs) {
             expression.filterArgs = helper.filterArgs;
         }
@@ -413,15 +453,18 @@ class TemplateEngine {
             return value;
         }
     
+        
+        let returnValue = value
         if (value === ENGINE_RETURN_EMPTY) {
-            if (this.returnArrayOrValue) return ;
-            return "";
+            if (this.returnArrayOrValue) returnValue = undefined;
+            else returnValue =    "";
         }
     
         if(!this.returnArrayOrValue){
     
             const t = typeof value 
             if (t !== "string") {
+                
                 if (t === "function") {
                     throw new Error("Value by default is not callable. Use a Helper.");
                 }
@@ -431,16 +474,20 @@ class TemplateEngine {
                 if (t === "object") {
                     return "[OBJECT]";
                 }
-                if(!value) return "";
+                if(!value) returnValue =  "";
     
-                return value;
+              
             
             }
     
         
         }
+
+        if(this.options?.filterValue){
+            returnValue = this.options?.filterValue(returnValue)
+        }
     
-        return value;
+        return returnValue;
     }
 
     renderExpression(exp, context) {
@@ -508,6 +555,17 @@ class TemplateEngine {
             }
            
         }
+
+
+        //handle from SSR
+        if(typeof window == "undefined" && value && exp.type == "inline" && exp.first !== "{"){
+
+               value =  escapeSpecial(value)
+        }
+
+      
+ 
+ 
 
 
         return this.filterValue(value);
@@ -622,7 +680,7 @@ class TemplateEngine {
         let match = source.match(reqOrString);
         if(!match) return [false, source.length]
         let keep = true
-        let i = 0
+        let nextIndex = -1
         let s = ""
         let max = source.length
         let stack = 0
@@ -633,16 +691,28 @@ class TemplateEngine {
         // const closeStack = source.match(/}}/g)
        
         // asd  {{  {{   }}  }}
-
+        let currentIndex;
         while(keep){
-            const char = source[i];
+            const char = source[nextIndex];
+            const prev = source[nextIndex-1];
+            const next = source[nextIndex+1];
+            currentIndex = nextIndex;
+           
+            nextIndex++
 
-            //save state of openining and closing brackets
-          
-            if(char == "}" && source[i-1] !== "\\"   && source[i+1] == "}" )  stack--;
+
+            //save state of openening and closing brackets
+            if(char == "}" && prev !== "\\"   && next == "}" )  {
+                
+                //escaped block
+                if(source[currentIndex+2] == "}")  nextIndex += 2
+                else nextIndex += 1
+
+                stack--;
+            }
     
             //if there is match and process brackets is closed, that's the point
-            if(match.index == i){
+            if(match.index == currentIndex){
                 //everything is closed
                 if(stack == 0) {
                     keep = false
@@ -653,10 +723,10 @@ class TemplateEngine {
                    
                     // const offset = match[0].length
                     const offset = 1 //increment only by one
-                    const newMatch = source.slice(i).match(reqOrString);
+                    const newMatch = source.slice(currentIndex).match(reqOrString);
 
                     if(!newMatch) {
-                        console.log(i, reqOrString)
+                        console.log(currentIndex, reqOrString)
                         console.log("thesource.:::",source)
                         console.log("ss", s)
                         debugger
@@ -664,21 +734,26 @@ class TemplateEngine {
                     newMatch.index = match.index + offset + newMatch.index
                     match = newMatch
                 }
-
-                // {{ { { }} }}
-
        
             }
 
-            if(char == "{" && source[i-1] !== "\\"  && source[i+1] == "{" )  stack++;
-        
-        
-            if(i == max){
-                keep = false
+            if(char == "{" && prev !== "\\"  && next == "{" )  {
+
+                //escaped block
+                if(source[currentIndex+2] == "}")  nextIndex += 2
+                else nextIndex += 1
+
+                stack++
+            
             }
-            s += char;
-            i++;
         
+            //end
+            if(currentIndex == max){  
+                keep = false 
+             }
+
+            s += source.slice(currentIndex, nextIndex);
+          
         }
 
         if(stack !== 0){
@@ -686,7 +761,7 @@ class TemplateEngine {
             debugger
             throw new Error("Bracket not closed ")
         }
-        return [s, i]
+        return [s, currentIndex]
 
     }
     //spliting is much faster...
@@ -737,13 +812,13 @@ class TemplateEngine {
          const namePos = [startPos, endName];
          let name = source.slice(...namePos )
 
+         if(first == "{" && name.includes("toJSO")){
+            debugger
+         }
          //remove first  not allowed "{@some" to "some" for clean name
          //also allow open parenthesis for nested expressions
          name = name.replace(/^[^a-zA-Z0-9(]{0,2}/, "")
 
-         if(first == "{"){
-            name = name.slice(0,-1) // remove clossing bracket
-         }
 
          if(name.includes("(")){
             name = name.replaceAll(/\(|\)/, (m)=>m == "("?"{{":"}}")
@@ -804,12 +879,15 @@ class TemplateEngine {
         let char = source[0]
         let rest = source
 
-
         const parentExp = process.stack.at(-2)
 
         if(this.filterArguments){
-           const check =  this.filterArguments(parentExp, source, process)
+           const check =  this.filterArguments(parentExp,source, process )
            if(check !== undefined){
+
+            if(!parentExp.args.list) parentExp.args.list = []
+            if(!parentExp.args.hash) parentExp.args.hash = {}
+
              return check
            }
         }
@@ -1050,6 +1128,9 @@ class TemplateEngine {
         while( s ){
           
             if(s === lastS){
+                
+                s = s.slice(1)
+                continue;
                 console.log("the source::::",source)
                 console.log("at::::", s)
                 throw new Error("Infinite loop:", lastS)
@@ -1110,6 +1191,10 @@ class TemplateEngine {
         }
         return ast;
 
+    }
+
+    clearTemplates(){
+        this.templates.clear()
     }
   }
   
