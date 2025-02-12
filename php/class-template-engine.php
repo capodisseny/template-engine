@@ -134,17 +134,21 @@ class TemplateEngine{
 
                 foreach($loop as $k=>$value ){
 
-                    $v;
-                    if(!$options["fn"] ?? false){
+
+                    $v = "";
+                    if($options["fn"] ?? false){
                         $v = $options["fn"]($value);
+
                     }
                     //block
                     else{
                         $v = $value;
                     }
-
                     $source .= $v;
+                   
                 }
+
+                
                 return $source;
             }
         ]);
@@ -374,6 +378,7 @@ class TemplateEngine{
         if(!$str) return $str;
 
 
+
         $exist = $this->getTemplate($str);
         
         if($exist ) {
@@ -427,6 +432,7 @@ class TemplateEngine{
             "source"=>$originalStr,
             "content"=>[]
         ];
+        
 
         //unset to avoid overrite other tempalates
         unset($this->currentTemplate );
@@ -527,6 +533,8 @@ class TemplateEngine{
 
 
 
+
+ 
         $r = $this->saveTemplate($originalStr, $template);
 
 
@@ -565,6 +573,8 @@ class TemplateEngine{
         $part = trim($part);
         $part = trim(substr($part, 2, -2));
 
+
+        preg_match("/(\S+)(.*)/", $part, $s);
         //expresion definition {{[.]....}}
         //  $definitions = [
         //     ""=>["type"=>"inline"],
@@ -589,14 +599,20 @@ class TemplateEngine{
         // }
 
         //Check first character
+
         $first =  substr($part,0, 1);
+        
 
         //escaped
         $triple = $first == $char[0];
+
+      
         if($triple) {
             $part = substr($part, 1, -1);
             $first = substr($part,0, 1);
+
         }
+
 
 
         //then block or inline
@@ -611,15 +627,18 @@ class TemplateEngine{
         $isEnd = $closeBlock;
 
 
-
+        //clean the part
+        $part = preg_replace('/^[^.a-zA-Z0-9(]{0,2}/', '', $part);
      
         if(isset($newContent ) ) unset(  $newContent );
+
         // $newContent = [];
         $content = [
             "part"=>$part,
             "type"=>$isInline?"inline":"block",
             "triple"=>$triple,
             "close"=>$isEnd,
+            // "getter"=>$part
             // "content"=>&$newContent,
         ];
         // unset(  $newContent );
@@ -633,27 +652,16 @@ class TemplateEngine{
 
         if(!$closeBlock ){
 
-            //remove the block character
-            if($openBlock )	$part = substr($part, 1);
 
-         
-
-            //new first can be the definer (@, >, ...)
-            $first = substr($part, 0, 1);
-            
-            //if is not letter
-            if(!preg_match("/^[.a-z0-9$]/i", $first)){
-               $part = substr($part, 1);
-            }
-
-            //[ match, name, args]
             $s =[];
+
             preg_match("/(\S+)\s*(.+)?/", $part, $s);
 
             $isNamed = $s[2] ?? false;
-            $name = $isNamed ? $s[1]:false;
-            $args = $isNamed ? $s[2] : $s[1];
+            $name = $isNamed ? $s[1] ?? false :false;
+            $args = $isNamed ? $s[2] ?? false : $s[1] ?? false;
 
+     
             //is helper {{@someId}}
             if(!$name && $first == "@"){
                 $name = $args;
@@ -752,7 +760,9 @@ class TemplateEngine{
 
         //HACK: I need to do this, i do [^\\] it breaks the expression
          $s = '[\]';
-         preg_match_all("/\S{2,}?(?:\s*?=(?:'.+?[^$s]'|\".+?[^$s]\"))?(?=\s+?|$)/", $args , $matches, PREG_PATTERN_ORDER);
+         $reg = "/\S{2,}?(?:\s*?=(?:'.+?[^$s]'|\".+?[^$s]\"))?(?=\s+?|$)/";
+         preg_match_all($reg, $args , $matches, PREG_PATTERN_ORDER);
+
 
 
         $len =  ($content["numberArgs"]  ?? 1) -1;
@@ -771,7 +781,7 @@ class TemplateEngine{
 
             foreach($matches[0] as $arg ){
 
-                $name = false;
+                $name = false;              
     
                 if(strpos($arg, "=")){
                     $s = [];
@@ -780,12 +790,11 @@ class TemplateEngine{
                     $arg = $s[2];
                  
                 }
-    
-    
-              //if doesn't fit more values in the ordered array
-              if(!$name &&    $index > ($len - 1)){
-                 continue;
-              }
+
+                //if doesn't fit more values in the ordered array
+                if(!$name &&    $index > ($len - 1)){
+                    continue;
+                }
                 
                 if(substr($arg, 0, 1) == '"' || substr($arg, 0, 1) == "'") $arg = substr($arg, 1, -1);
                 else if( $arg == ".") {
@@ -811,7 +820,7 @@ class TemplateEngine{
     }
 
     //set the return by reference
-    private function &setupHelper($name , &$content, $args){
+    private function &setupHelper($name , &$expression, $args){
 
 
         $helper = false;
@@ -822,16 +831,20 @@ class TemplateEngine{
         if(!$helper && $args && is_string($args)) $helper =  $this->getHelper($args);
     
 
-
         //skip not found helpers
         if($name && !$helper){  
             
             trigger_error("Helper not found: '$name'//" );
             // die("Helper not found");
-            return $content;
+            return $expression;
         }
 
-        if(!$helper) return $content;
+        //set a the getter as a the part name
+        if(!$name ){
+            $expression["getter"] = $expression["part"];
+        }
+        
+        if(!$helper) return $expression;
 
 
         $compiler = $this->getCompiler($helper);
@@ -840,55 +853,55 @@ class TemplateEngine{
         if($compiler){
             $blockStack = &$this->blockStack;
             $parent = $blockStack[count($blockStack)-1];
-            $content = $compiler($content, $parent, $args);
+            $expression = $compiler($expression, $parent, $args);
         }
         
          
         //render function
-        if($content["type"] == "block"){
-            $content["render"] = function($context) use ( &$content){
+        if($expression["type"] == "block"){
+            $expression["render"] = function($context) use ( &$expression){
         
-                return $this->renderContent( $content, $context);
+                return $this->renderContent( $expression, $context);
             }; 
         }
 
         //get value function
-        // $content["getValue"] = function($context = false) use(&$args){
+        // $expression["getValue"] = function($context = false) use(&$args){
         //     return $this->get($args, $context);
         // };
 
 
         $helperRender =  $helper["render"] ?? false;
       
-        $content["helperFn"] =  $helperRender;
+        $expression["helperFn"] =  $helperRender;
 
         if($helperRender && is_callable($helperRender)){
 
             $reflection = new \ReflectionFunction($helperRender);
                 // echo $reflection->getNumberOfParameters();      // Output: 3
                 // echo $reflection->getNumberOfRequiredParameters(); // Output: 2
-            $content["numberArgs"] = $reflection->getNumberOfParameters();   
+            $expression["numberArgs"] = $reflection->getNumberOfParameters();   
         }
 
         //compileArgs
         if(is_array($helper) && isset($helper["compileArgs"])){
 
-            $content["args"] = $helper["compileArgs"]($args);
+            $expression["args"] = $helper["compileArgs"]($args);
         }
 
         //filterArgs
         if(is_array($helper) && isset($helper["filterArgs"])){
 
-            $content["filterArgs"] = $helper["filterArgs"];
+            $expression["filterArgs"] = $helper["filterArgs"];
         }
 
         //validateContent
         if(is_array($helper) && isset($helper["validateContent"])){
 
-            $content["validateContent"] = $helper["validateContent"];
+            $expression["validateContent"] = $helper["validateContent"];
         }
 
-        return $content;
+        return $expression;
     }
 
     private function joinValue($carry, $value){
@@ -946,6 +959,8 @@ class TemplateEngine{
     }
     private function renderPart($exp, $context){
 
+
+        
         //a normal string
         if(is_string($exp)) return $exp;
 
@@ -981,11 +996,16 @@ class TemplateEngine{
         //INIT VALUE
         $value;
 
+
+    
         //inline
         if(!isset($exp["helperFn"]) && $type == "inline"){
 
-            $value =  $parsedArgs["ordered"][0] ?? null;
 
+            $value = $this->get($exp["getter"], $context);
+            // $value =  $parsedArgs["ordered"][0] ?? null;
+
+        
         }
         //processed helpers
         else if($isMain){
@@ -1009,19 +1029,33 @@ class TemplateEngine{
             $named = $parsedArgs["named"] ?? [];
 
     
+
+            if(!$context){
+			
+				die("alskdaj");
+			}
+            
+
             // \Closure::bind( $template, $this)($context->props ?? false , $context);
-            $value = call_user_func_array($exp["helperFn"],  [...$ordered , ["fn"=>$exp["render"] ?? false,"context"=>$context, "args"=>$named ] ]  );
+            $value = call_user_func_array($exp["helperFn"],  [...$ordered , ["fn"=>$exp["render"] ?? false,"context"=>$context, "args"=>$named, "exp"=> $exp ] ]  );
 
         }
         //default behavour
         else{
 
+
+           
+            if($exp["getter"] ?? false  ){
+
+                if(!$this->get($exp["getter"], $context)) return ENGINE_RETURN_EMPTY;
+                
+            }
             //return empty
-            if(!$this->validateContent($exp, $parsedArgs)){ 
+            else if(!$this->validateContent($exp, $parsedArgs)){ 
                 return ENGINE_RETURN_EMPTY;
             }
             //return the content
-            else $value = $this->renderContent($exp, $context);
+            $value = $this->renderContent($exp, $context);
         }
         return $this->filterValue($value);
 
@@ -1032,13 +1066,18 @@ class TemplateEngine{
             return $exp["validateContent"]($parsedArgs, $exp);
         }
 
+        
+
         return   $parsedArgs["ordered"][0] ?? false;
 
 
     }
     private function get($path, $context){
 
-        $steps =  is_array($path)? $path : $path.split('.');
+        if($path == ".") return $context;
+
+
+        $steps =  is_array($path)? $path :explode('.', $path);
 
         $value = $context;
         $i = -1;
@@ -1104,16 +1143,28 @@ class TemplateEngine{
     public function render($str_or_arr, $context = [], $returnArrayOrValue = false){
 
 
+
+    
+        
         if(!is_string($str_or_arr)) return $str_or_arr;
         
+
+     
         if(!$str_or_arr) return $str_or_arr;
-        
+ 
+
         $this->returnArrayOrValue =  $returnArrayOrValue;
 
         // $result = $this->compile($str_or_arr, true, $context);
         $template = $this->compile($str_or_arr);
-        return  $template($context);
 
+        $result =   $template($context);
+
+    
+
+        return $result;
+
+        
         $this->returnArrayOrValue = false;
 
         return $result;

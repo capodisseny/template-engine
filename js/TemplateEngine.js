@@ -391,11 +391,12 @@ class TemplateEngine {
                 expression.getter = expression.name;
                 expression.name = false
             }
-      
+
             return;
         }
     
         const compiler = this.getCompiler(helper);
+        
         if (compiler) {
 
             compiler(expression, args);
@@ -504,7 +505,7 @@ class TemplateEngine {
 
         if(type == "root") this.currentTemplate = exp;
     
-        //{{some.prop}} 
+        //INLINE {{some.prop}} 
         if (!helperFn && type === "inline") {
 
             if(exp.getter){
@@ -610,7 +611,9 @@ class TemplateEngine {
             return;
         }
         if( typeof path !== "string" && !Array.isArray(path)){
-            debugger
+
+            console.log(path)
+            console.warn("NOT IMPLEMNENT ED")
             return
         }
 
@@ -812,9 +815,9 @@ class TemplateEngine {
          const namePos = [startPos, endName];
          let name = source.slice(...namePos )
 
-         if(first == "{" && name.includes("toJSO")){
-            debugger
-         }
+        //  if(first == "{" && name.includes("toJSO")){
+        //     debugger
+        //  }
          //remove first  not allowed "{@some" to "some" for clean name
          //also allow open parenthesis for nested expressions
          name = name.replace(/^[^a-zA-Z0-9(]{0,2}/, "")
@@ -825,7 +828,8 @@ class TemplateEngine {
          }
 
          if(name.includes("{{")){
-            debugger
+            console.warn("Change from inner brackets to inner parenthesis:", source)
+
             name = this.parse(name, process)
          }
 
